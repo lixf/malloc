@@ -1,8 +1,12 @@
+<<<<<<< HEAD
 /* Xiaofan Li
  * xli2
  * 18213 f13
  * mallocLab 
  *
+=======
+/*
+>>>>>>> 2de487e0b0873c771c8c78d2bf6639361f7f69d6
  * mm.c
  *
  * NOTE TO STUDENTS: Replace this header comment with your own header
