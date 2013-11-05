@@ -103,6 +103,11 @@ void* realloc(void* ptr,size_t size);
 void* calloc(size_t nmemb,size_t size);
 void mm_checkheap(int verbose);
 
+
+char* split(void* block, size_t size,int index);
+void tableAdd (char* bp);
+static void* coalesce (char* bp);
+int getIndex(size_t size);
 static void place (char* bp, size_t size);
 static void* find_fit(size_t size);
 static int aligned(const void *p);
@@ -136,7 +141,7 @@ int mm_init(void) {
     
 
     //add the free block into the table
-    tableAdd(heap_listp+(2*WSIZE));
+    tableAdd(heap_listp+(3*WSIZE));//give the blk ptr
     return 0;
 }
 
@@ -178,14 +183,22 @@ static void* coalesce (char* bp) {
     //case 2
     else if (prev_alloc && !next_alloc) {
         //take out the next block from table
-        void* next = NEXT_BLKP(bp);
+        unsigned* next_phy =(unsigned*) NEXT_BLKP(bp);
         //change the previous and next block in the table
-        *(((char*)(*next))+WSIZE) = *((char*)next+WSIZE);
+        //*((char*)((*next)+WSIZE)) = *(next+WSIZE);
+        char* prev_list = (char*)(void*) *next_phy;
+        char* next_list = (char*)(void*) *(next_phy+WSIZE);
+        char* prev_next = (char*)(void*) *(prev_list+WSIZE);
+        char* next_prev = (char*)(void*)*nect_list;
+        
+        prev_next = next_list;
+        next_prev = prev_list;
+        
         /*
          *set the previous free block point to the next one 
          *also set the prev of the next to point to the previous
          */ 
-        (*(*((char*)next+WSIZE))) = *next;
+        (*(*(next+WSIZE))) = *next;
 
         //takes care of the physical adr stuff
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
@@ -197,7 +210,7 @@ static void* coalesce (char* bp) {
     else if (!prev_alloc && next_alloc) {
         void* last = PREV_BLKP(bp);
         //same as above
-        *(((char*)(*last))+WSIZE) = *((char*)last+WSIZE);
+        *(((char*)(*(char*)last))+WSIZE) = *((char*)last+WSIZE);
         (*(*((char*)last+WSIZE))) = *last;
         
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
@@ -212,9 +225,9 @@ static void* coalesce (char* bp) {
         void* next = NEXT_BLKP(bp);
         void* last = PREV_BLKP(bp);
         
-        *(((char*)(*next))+WSIZE) = *((char*)next+WSIZE);
+        *(((char*)(*(char*)next))+WSIZE) = *((char*)next+WSIZE);
         (*(*((char*)next+WSIZE))) = *next;
-        *(((char*)(*last))+WSIZE) = *((char*)last+WSIZE);
+        *(((char*)(*(char*)last))+WSIZE) = *((char*)last+WSIZE);
         (*(*((char*)last+WSIZE))) = *last;
 
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
