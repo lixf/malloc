@@ -417,7 +417,11 @@ static char* find_fit (size_t size){
     //table[index] = next;
     //*next = NULL;
 }
-
+/*
+ * takes in a ptr to a payload 
+ * split the block if too big 
+ * add the split block back to table
+ */
 char* split(void* block, size_t size,int index){
     //don't bother spliting if in class 1
     if (index<4) return (char*)block;
@@ -425,7 +429,7 @@ char* split(void* block, size_t size,int index){
     int diff = GET_SIZE(HDRP((char*)block)) - size;
     //SPL_TOR = split tolerance default = 4
     //the higher it is, more utilization less efficiency
-    if (diff < (size/SPL_TOR)) return (char*)block;
+    if ((unsigned)diff < (size/SPL_TOR)) return (char*)block;
     else {
         //splits into two aligned blocks
         ASSERT(diff>MIN_BLK_SIZE);
@@ -464,6 +468,8 @@ void free (void* ptr) {
  * realloc - you may want to look at mm-naive.c
  */
 void *realloc(void *oldptr, size_t size) {
+    oldptr = oldptr;
+    size=size;
     return NULL;
 }
 
@@ -473,6 +479,8 @@ void *realloc(void *oldptr, size_t size) {
  * needed to run the traces.
  */
 void *calloc (size_t nmemb, size_t size) {
+    nmemb = nmemb;
+    size = size;
     return NULL;
 }
 
@@ -500,10 +508,10 @@ static int aligned(const void *p) {
 static int valid_list(void* bucket,int index){
     //count number of free lists
     int count = 0;
-    char* bp = bucket;
+    long unsigned* bp = bucket;
     if (bp==NULL) return 0; //if nothing is in the list
     
-    char* next = *(bp + WSIZE);
+    long unsigned* next = (long unsigned*)(*(bp + 1));
 
     //check if the size is in the right bucket
     while (bp != NULL) {
@@ -514,7 +522,7 @@ static int valid_list(void* bucket,int index){
             return -1;
         }
         bp = next;
-        next = *(bp+WSIZE);
+        next = (long unsigned*)(*(bp + 1));
     }
     return count;
 }
@@ -531,7 +539,7 @@ static int valid_table(void){
         dbg_printf("table init prob\n");
         return -1;
     int i;
-    for(i = 0;i<tb_len;i++){
+    for(i = 0;i<20;i++){
         if((countList = valid_list(table[i],i))==-1){
             dbg_printf("list prob\n");
             return -1;
@@ -597,7 +605,7 @@ void mm_checkheap(int verbose) {
 
         //3.checks heap boundaries
         if (!in_heap((void*)current))
-            dbg_printf("outside heap\n")
+            dbg_printf("outside heap\n");
             exit(1);
             
         //4.checks coalescing
