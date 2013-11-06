@@ -17,7 +17,7 @@
 #include <stdbool.h>
 #include "mm.h"
 #include "memlib.h"
-
+#include "contracts.h"
 /* If you want debugging output, use the following macro.  When you hand
  * in, remove the #define DEBUG line. */
 #define DEBUG
@@ -68,8 +68,8 @@
 #define PACK(size, alloc) ((size) | (alloc))
 
 /* Read and write a word at address p */
-#define GET(p)      (*(unsigned int *)(p))
-#define PUT(p, val) (*(unsigned int *)(p) = (val))
+#define GET(p)      (*(long int *)(p))
+#define PUT(p, val) (*(long int *)(p) = (val))
 
 /* Read the size and allocated fields from address p */
 #define GET_SIZE(p) (GET(p) & ~0x7)
@@ -109,8 +109,37 @@ void tableAdd (char* bp);
 static void* coalesce (char* bp);
 int getIndex(size_t size);
 static void place (char* bp, size_t size);
-static void* find_fit(size_t size);
+static char* find_fit(size_t size);
 static int aligned(const void *p);
+
+
+/*
+ * inline helper for pointer arith
+ * take out the block from the seglist table
+ *
+ */
+inline void takeOut(long unsigned* ptr){ 
+    
+    //change the previous and next block in the table
+    //*((char*)((*next)+WSIZE)) = *(next+WSIZE);
+    long unsigned* prev_list = (long unsigned*) *ptr;
+    long unsigned* next_list = (long unsigned*) *(ptr+1);
+    long unsigned* prev_next = (long unsigned*) *(prev_list+1);
+    long unsigned* next_prev = (long unsigned*) *next_list;
+        
+    /*
+     * set the previous free block point to the next one 
+     * also set the prev of the next to point to the previous
+     */ 
+    prev_next = next_list;
+    next_prev = prev_list;
+
+    return;
+
+}
+
+
+
 
 /*
  * Initialize: return -1 on error, 0 on success.
@@ -123,7 +152,7 @@ int mm_init(void) {
       return -1;
     
     /* the first 20 blocks are table entries NULL-ed*/
-    table = heap_listp;
+    table = (void**)heap_listp;
     int i;
     for (i=0;i<20;i++){
         table[i] = NULL;
@@ -182,23 +211,8 @@ static void* coalesce (char* bp) {
     
     //case 2
     else if (prev_alloc && !next_alloc) {
-        //take out the next block from table
-        unsigned* next_phy =(unsigned*) NEXT_BLKP(bp);
-        //change the previous and next block in the table
-        //*((char*)((*next)+WSIZE)) = *(next+WSIZE);
-        char* prev_list = (char*)(void*) *next_phy;
-        char* next_list = (char*)(void*) *(next_phy+WSIZE);
-        char* prev_next = (char*)(void*) *(prev_list+WSIZE);
-        char* next_prev = (char*)(void*)*nect_list;
-        
-        prev_next = next_list;
-        next_prev = prev_list;
-        
-        /*
-         *set the previous free block point to the next one 
-         *also set the prev of the next to point to the previous
-         */ 
-        (*(*(next+WSIZE))) = *next;
+        //takes out the next blk after bp
+        takeOut((long unsigned*)NEXT_BLKP(bp)); 
 
         //takes care of the physical adr stuff
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
@@ -208,11 +222,13 @@ static void* coalesce (char* bp) {
 
     //case 3
     else if (!prev_alloc && next_alloc) {
-        void* last = PREV_BLKP(bp);
+        //void* last_phy = PREV_BLKP(bp);
         //same as above
-        *(((char*)(*(char*)last))+WSIZE) = *((char*)last+WSIZE);
-        (*(*((char*)last+WSIZE))) = *last;
-        
+        //*(((char*)(*(char*)last))+WSIZE) = *((char*)last+WSIZE);
+        //(*(*((char*)last+WSIZE))) = *last;
+
+        takeOut((long unsigned*)PREV_BLKP(bp));
+
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
@@ -222,13 +238,16 @@ static void* coalesce (char* bp) {
     //case 4
     else {
         
-        void* next = NEXT_BLKP(bp);
+        /*void* next = NEXT_BLKP(bp);
         void* last = PREV_BLKP(bp);
         
         *(((char*)(*(char*)next))+WSIZE) = *((char*)next+WSIZE);
         (*(*((char*)next+WSIZE))) = *next;
         *(((char*)(*(char*)last))+WSIZE) = *((char*)last+WSIZE);
         (*(*((char*)last+WSIZE))) = *last;
+        */
+        takeOut((long unsigned*)PREV_BLKP(bp));
+        takeOut((long unsigned*)NEXT_BLKP(bp));
 
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
         GET_SIZE(FTRP(NEXT_BLKP(bp)));
@@ -254,11 +273,11 @@ int getIndex(size_t size){
     
     int index = -1;
     //check for class
-    if (size > CLASS3_MAX){
+    /*if (size > CLASS3_MAX){
         dbg_printf("block too big!\n");
         exit(1);
-    } 
-    else if (size > CLASS3_MIN){
+    } */
+    if (size > CLASS3_MIN){
         //in class 3 get highest bit
         int i;
         for(i=32;i>11;i--){
@@ -302,12 +321,12 @@ void tableAdd (char* bp){
     index = getIndex(size);
     ASSERT (index>=0 && index<20);
 
-    //change the table[index]
+    //change the table[index]maybe TODO
     void* next = table[index];
     table[index] = bp;
-    *bp = NULL;
-    *(bp + WSIZE) = next;
-    *next = bp;
+    *(long unsigned*)bp = (long unsigned)NULL;
+    *(long unsigned*)(bp + WSIZE) = (long unsigned)next;
+    *(long unsigned*)next = (long unsigned)bp;
     return;
 }
 
@@ -361,10 +380,7 @@ void place (char* bp, size_t size) {
   
   int index = getIndex(blkSize);
   //take out the blk
-  char* next = *(bp+WSIZE);
-  char* prev = *bp;
-  *next = prev;
-  *(prev+WSIZE) = next;
+  takeOut((long unsigned*) bp);
   
   bp = split(bp,size,index);
 
@@ -378,7 +394,7 @@ void place (char* bp, size_t size) {
  * helper function for malloc : find_fit
  */
 
-char* find_fit (size_t size){
+static char* find_fit (size_t size){
     int index;
     index = getIndex(size);
     if (index==-1) return NULL;
@@ -388,19 +404,18 @@ char* find_fit (size_t size){
     //take out the first one
     char* temp = table[index];
     while(temp != NULL){
-        if (GET_SIZE(HDRP(temp))>=size)
+        if ((size_t)GET_SIZE(HDRP(temp))>=size)
             return temp;
-        temp = *(temp+WSIZE);
+        temp = (char*)(*(long unsigned*)(temp+WSIZE));
     }
     //only returns a ptr to the right blk
     //doesn't change ptr around nor split
 
     return NULL;
     
-    char* next = *(temp+WSIZE);
-    table[index] = next;
-    *next = NULL;
-
+    //char* next = *(temp+WSIZE);
+    //table[index] = next;
+    //*next = NULL;
 }
 
 char* split(void* block, size_t size,int index){
@@ -441,7 +456,7 @@ void free (void* ptr) {
     PUT(FTRP(bp), PACK(size, 0));
     
     coalesce(bp);
-    dbg_heapCheck;
+    dbg_heapCheck(1);
     return;
 }
 

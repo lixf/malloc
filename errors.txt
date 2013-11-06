@@ -1,61 +1,20 @@
 gcc -Wall -Wextra -Werror -O2 -g -DDRIVER -std=gnu99   -c -o mm.o mm.c
 cc1: warnings being treated as errors
-mm.c: In function ‘mm_init’:
-mm.c:126: error: assignment from incompatible pointer type
-mm.c: In function ‘coalesce’:
-mm.c:189: error: cast to pointer from integer of different size
-mm.c:190: error: cast to pointer from integer of different size
-mm.c:191: error: cast to pointer from integer of different size
-mm.c:192: error: ‘nect_list’ undeclared (first use in this function)
-mm.c:192: error: (Each undeclared identifier is reported only once
-mm.c:192: error: for each function it appears in.)
-mm.c:201: error: ‘next’ undeclared (first use in this function)
-mm.c:213: error: cast to pointer from integer of different size
-mm.c:214: error: invalid type argument of ‘unary *’ (have ‘int’)
-mm.c:214: error: dereferencing ‘void *’ pointer
-mm.c:228: error: cast to pointer from integer of different size
-mm.c:229: error: invalid type argument of ‘unary *’ (have ‘int’)
-mm.c:229: error: dereferencing ‘void *’ pointer
-mm.c:230: error: cast to pointer from integer of different size
-mm.c:231: error: invalid type argument of ‘unary *’ (have ‘int’)
-mm.c:231: error: dereferencing ‘void *’ pointer
-mm.c: In function ‘getIndex’:
-mm.c:257: error: left shift count >= width of type
-mm.c: In function ‘tableAdd’:
-mm.c:298: error: implicit declaration of function ‘ASSERT’
-mm.c:299: error: cast to pointer from integer of different size
-mm.c:308: error: assignment makes integer from pointer without a cast
-mm.c:309: error: assignment makes integer from pointer without a cast
-mm.c:310: error: dereferencing ‘void *’ pointer
-mm.c:310: error: invalid use of void expression
-mm.c: In function ‘place’:
-mm.c:360: error: comparison between signed and unsigned integer expressions
-mm.c:364: error: initialization makes pointer from integer without a cast
-mm.c:365: error: initialization makes pointer from integer without a cast
-mm.c:366: error: assignment makes integer from pointer without a cast
-mm.c:367: error: assignment makes integer from pointer without a cast
-mm.c: At top level:
-mm.c:381: error: conflicting types for ‘find_fit’
-mm.c:112: note: previous declaration of ‘find_fit’ was here
-mm.c: In function ‘find_fit’:
-mm.c:393: error: assignment makes pointer from integer without a cast
-mm.c:400: error: initialization makes pointer from integer without a cast
-mm.c:402: error: assignment makes integer from pointer without a cast
 mm.c: In function ‘split’:
-mm.c:413: error: comparison between signed and unsigned integer expressions
-mm.c: In function ‘mm_free’:
-mm.c:444: error: ‘dbg_heapCheck’ undeclared (first use in this function)
+mm.c:428: error: comparison between signed and unsigned integer expressions
 mm.c: In function ‘mm_realloc’:
-mm.c:451: error: unused parameter ‘oldptr’
-mm.c:451: error: unused parameter ‘size’
+mm.c:466: error: unused parameter ‘oldptr’
+mm.c:466: error: unused parameter ‘size’
 mm.c: In function ‘mm_calloc’:
-mm.c:460: error: unused parameter ‘nmemb’
-mm.c:460: error: unused parameter ‘size’
+mm.c:475: error: unused parameter ‘nmemb’
+mm.c:475: error: unused parameter ‘size’
 mm.c: In function ‘valid_list’:
-mm.c:491: error: initialization makes pointer from integer without a cast
-mm.c:502: error: assignment makes pointer from integer without a cast
+mm.c:506: error: initialization makes pointer from integer without a cast
+mm.c:517: error: assignment makes pointer from integer without a cast
 mm.c: In function ‘valid_table’:
-mm.c:519: error: ‘tb_len’ undeclared (first use in this function)
+mm.c:534: error: ‘tb_len’ undeclared (first use in this function)
+mm.c:534: error: (Each undeclared identifier is reported only once
+mm.c:534: error: for each function it appears in.)
 mm.c: In function ‘mm_checkheap’:
-mm.c:586: error: expected ‘;’ before ‘exit’
+mm.c:601: error: expected ‘;’ before ‘exit’
 make: *** [mm.o] Error 1
