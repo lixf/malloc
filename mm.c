@@ -53,12 +53,12 @@
 #define TB_LEN 20 //table length = 20
 #define SPL_TOR 4
 
-#define CLASS3_MIN (1<<12)
-#define CLASS3_MAX (1<<32)
+#define CLASS1_MIN (1<<12)
+#define CLASS1_MAX (1<<31)
 #define CLASS2_MIN (1<< 6)
 #define CLASS2_MAX (CLASS3_MIN-1)
-#define CLASS1_MIN MIN_BLK_SIZE
-#define CLASS1_MAX (CLASS2_MIN-1)
+#define CLASS3_MIN MIN_BLK_SIZE
+#define CLASS3_MAX (CLASS2_MIN-1)
 
 
 #define CHUNKSIZE (1<<12) //extend the heap by CHUNKSIZE
@@ -77,7 +77,7 @@
 
 /* Given block ptr bp, compute address of its header and footer */
 #define HDRP(bp)    ((char *)(bp) - WSIZE)
-#define FTRP(bp)    ((char *)(bp) + GET_SIZE(HDRP(bp)) - WSIZE)
+#define FTRP(bp)    ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
 
 /* Given block ptr bp, compute address of next and previous blocks */
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
@@ -89,12 +89,12 @@
 
 static char* heap_listp;
 static void** table;
-
+static char* heap_max;
 
 
 /* function declarations*/
 
-int mm_int(void);
+int mm_init(void);
 static void* extend_heap(size_t words);
 
 void* malloc(size_t size);
@@ -118,39 +118,59 @@ static int aligned(const void *p);
  * take out the block from the seglist table
  *
  */
-inline void takeOut(long unsigned* ptr){ 
+static inline void takeOut(long unsigned* ptr){ 
     
     //change the previous and next block in the table
     //*((char*)((*next)+WSIZE)) = *(next+WSIZE);
     long unsigned* prev_list = (long unsigned*) *ptr;
     long unsigned* next_list = (long unsigned*) *(ptr+1);
-    long unsigned* prev_next = (long unsigned*) *(prev_list+1);
-    long unsigned* next_prev = (long unsigned*) *next_list;
+    if (prev_list == NULL){
+        if (next_list == NULL){
+            //list had only one elem
+            char* bp = (char*)ptr;
+            table[getIndex(GET_SIZE(HDRP(bp)))] = NULL;
+        }
+        else{
+            //the first one in the list
+            char* bp = (char*) ptr;
+            table[getIndex(GET_SIZE(HDRP(bp)))] = next_list;
+            long unsigned* next_prev = (long unsigned*) *next_list;
+            next_prev = NULL;
+        }
+    }
+    else if(next_list == NULL){
+        long unsigned* prev_next = (long unsigned*) *(prev_list+1);
+        prev_next = NULL;
+    }
+    else{
+        long unsigned* prev_next = (long unsigned*) *(prev_list+1);
+        long unsigned* next_prev = (long unsigned*) *next_list;
         
     /*
      * set the previous free block point to the next one 
      * also set the prev of the next to point to the previous
      */ 
-    prev_next = next_list;
-    next_prev = prev_list;
+        prev_next = next_list;
+        next_prev = prev_list;
+    }
 
+    dbg_printf("check from takeOut\n");
+    dbg_heapCheck(1);
     return;
 
 }
-
-
-
 
 /*
  * Initialize: return -1 on error, 0 on success.
  */
 int mm_init(void) {
- 
+    
     /* Create the initial empty heap */
-    if ((heap_listp = mem_sbrk(24*WSIZE)) == (void *)-1)
+    if ((heap_listp = mem_sbrk(23*WSIZE)) == (void *)-1){
       dbg_printf("init problem\n");
       return -1;
-    
+    }
+   
     /* the first 20 blocks are table entries NULL-ed*/
     table = (void**)heap_listp;
     int i;
@@ -158,19 +178,19 @@ int mm_init(void) {
         table[i] = NULL;
     }
 
-    PUT(heap_listp + (20*WSIZE), PACK(DSIZE, 1)); /* Prologue header */
-    PUT(heap_listp + (21*WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
-    PUT(heap_listp + (22*WSIZE), PACK(0, 1));      /* Epilogue header */
-    //heap_listp points to prilogue after init
+    
     heap_listp += (20*WSIZE);
+    heap_max = heap_listp + (unsigned)CLASS1_MAX;
+
+    PUT(heap_listp , PACK(DSIZE, 1)); /* Prologue header */
+    PUT(heap_listp + (WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
+    PUT(heap_listp + (2*WSIZE), PACK(0, 1));      /* Epilogue header */
+    //heap_listp points to prilogue after init
 
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
         return -1;
-    
-
-    //add the free block into the table
-    tableAdd(heap_listp+(3*WSIZE));//give the blk ptr
+     
     return 0;
 }
 
@@ -181,15 +201,18 @@ int mm_init(void) {
 static void *extend_heap(size_t words) {
     char *bp;
 
+    if((long unsigned)mem_heap_hi()+words > (long unsigned)heap_max) return NULL; 
     /* use mem_sbrk to allocate new heap */
     if ((long)(bp = mem_sbrk(words)) == -1)
         return NULL;
+    dbg_printf("new bp:%p,heap_max:%p,heap_listp:%p\n",bp,heap_max,heap_listp);    
+   
 
     /* Initialize free block header/footer and the epilogue header */
     PUT(HDRP(bp), PACK(words,0));      /* Free block header(previous epilogue)*/
     PUT(FTRP(bp), PACK(words,0));      /* Free block footer */
     PUT(HDRP(NEXT_BLKP(bp)),PACK(0,1));/* New epilogue*/
-
+    dbg_printf("bp:%p,hd:%p,ft:%p,ep:%p\n",bp,HDRP(bp),FTRP(bp),NEXT_BLKP(bp));
     /* Coalesce if the previous block was free */
     return coalesce(bp);
 }
@@ -200,12 +223,16 @@ static void *extend_heap(size_t words) {
 
 static void* coalesce (char* bp) {
 
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    size_t prev_alloc = GET_ALLOC(HDRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+    size_t next_size = GET_SIZE(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
-
+    dbg_printf("prev_alloc:%d,next_alloc:%d,next_size:%d,size:%d\n",(int)prev_alloc,(int)next_alloc,(int)next_size,(int)size);
     //case 1
     if (prev_alloc && next_alloc) {
+        dbg_printf("checking heap\n");
+        dbg_heapCheck(1);
+        tableAdd(bp);
         return bp;
     }
     
@@ -257,8 +284,9 @@ static void* coalesce (char* bp) {
     }
     //re-add coalesced bp
     tableAdd(bp);
+    dbg_printf("before check\n");
     mm_checkheap(1);
-
+    dbg_printf("passed check in coal\n");
     return bp;
 
 }
@@ -270,30 +298,33 @@ static void* coalesce (char* bp) {
  *
  */
 int getIndex(size_t size){
-    
     int index = -1;
+    dbg_printf("size to look up: %d\n",(int)size);
     //check for class
-    /*if (size > CLASS3_MAX){
+    if ((long unsigned)size > (long unsigned)CLASS1_MAX){
         dbg_printf("block too big!\n");
-        exit(1);
-    } */
-    if (size > CLASS3_MIN){
-        //in class 3 get highest bit
+        return index;
+    } 
+    if (size >= CLASS1_MIN){
+        //in class 1 get highest bit
+        dbg_printf("in class 1\n");
         int i;
         for(i=32;i>11;i--){
             int map = 1<<i;
-            if ((size&map)==1){
+            if ((size&map)!=0){
               index = ((i -12)/2)+10;
               break;
             }
         }
     }
-    else if (size > CLASS2_MIN){
-        //in class 2 get highest bit
+    else if (size >= CLASS2_MIN){
+        //in class 2 get highest bit        
+        dbg_printf("in class 2\n");
         int i;
         for(i=11;i>5;i--){
             int map = 1<<i;
-            if((size&map)==1){
+            //printf("size:%d,map:%d,&:%d\n",(int)size,map,(int)(map&size));
+            if((size&map)!=0){
               index = i-2;//i-6+4
               break;
             }
@@ -301,9 +332,10 @@ int getIndex(size_t size){
     }
     else{
         //in class 3
+        dbg_printf("in class 3\n");
         index = (size -32)/8; 
     }
-
+    ASSERT(index >= 0 && index < 20);
     return index;
 }
 /* 
@@ -314,19 +346,22 @@ int getIndex(size_t size){
 void tableAdd (char* bp){
     
     int size = GET_SIZE(HDRP(bp));
+
     ASSERT(size>MIN_BLK_SIZE);
     ASSERT(GET_ALLOC((HDRP(bp))==0));
     int index;
 
     index = getIndex(size);
-    ASSERT (index>=0 && index<20);
+    dbg_printf("index to add to %d,bp:%p\n",index,bp);
+    if (index ==-1) 
+      return;
 
     //change the table[index]maybe TODO
     void* next = table[index];
     table[index] = bp;
-    *(long unsigned*)bp = (long unsigned)NULL;
+    *bp = 0;
     *(long unsigned*)(bp + WSIZE) = (long unsigned)next;
-    *(long unsigned*)next = (long unsigned)bp;
+    dbg_printf("hi from add\n");
     return;
 }
 
@@ -339,9 +374,9 @@ void *malloc (size_t size) {
     size_t extendsize;  /* Amount to extend heap if no fit */
     char *bp;
 
-
+    dbg_printf("requesting size: %d\n",(int)size);
     /* Ignore spurious requests */
-    if (size == 0)
+    if (size == 0 || size >= (long unsigned)CLASS1_MAX)
         return NULL;
 
     /* Adjust block size to include overhead and alignment reqs. 
@@ -359,10 +394,10 @@ void *malloc (size_t size) {
         place(bp, asize);
         return bp;
     }
-
+    dbg_printf("going to extend for size:%d\n",(int)size);
     /* No fit found. Get more memory and place the block */
     extendsize = MAX(asize,CHUNKSIZE);
-    if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
+    if ((bp = extend_heap(extendsize)) == NULL)
         return NULL;
     place(bp, asize);
     return bp;
@@ -375,8 +410,8 @@ void *malloc (size_t size) {
 
 void place (char* bp, size_t size) {
   //size is aligned to 8B in malloc
-  int blkSize = GET_SIZE(HDRP(bp));
-  ASSERT(blkSize>=size);
+  unsigned blkSize = GET_SIZE(HDRP(bp));
+  assert(blkSize>=size);
   
   int index = getIndex(blkSize);
   //take out the blk
@@ -404,8 +439,10 @@ static char* find_fit (size_t size){
     //take out the first one
     char* temp = table[index];
     while(temp != NULL){
-        if ((size_t)GET_SIZE(HDRP(temp))>=size)
+        dbg_printf("in look up, blk_size is%d,size is%d\n",(int)GET_SIZE(HDRP(temp)),(int)size);
+        if ((size_t)GET_SIZE(HDRP(temp))>=size){
             return temp;
+        }
         temp = (char*)(*(long unsigned*)(temp+WSIZE));
     }
     //only returns a ptr to the right blk
@@ -425,8 +462,12 @@ static char* find_fit (size_t size){
 char* split(void* block, size_t size,int index){
     //don't bother spliting if in class 1
     if (index<4) return (char*)block;
-    
+    //assert((size_t)GET_SIZE(HDRP(block))>=size); 
     int diff = GET_SIZE(HDRP((char*)block)) - size;
+    
+    dbg_printf("diff is %d, blk_size is%d,size is%d\n",diff,(int)GET_SIZE(HDRP(block)),(int)size);
+
+
     //SPL_TOR = split tolerance default = 4
     //the higher it is, more utilization less efficiency
     if ((unsigned)diff < (size/SPL_TOR)) return (char*)block;
@@ -514,15 +555,16 @@ static int valid_list(void* bucket,int index){
     long unsigned* next = (long unsigned*)(*(bp + 1));
 
     //check if the size is in the right bucket
-    while (bp != NULL) {
+    while (next != NULL) {
         count++;
         int size = GET_SIZE(HDRP(bp)); 
         if(!(getIndex(size)==index)){
-            dbg_printf("wrong bucket\n");
+            dbg_printf("wrong bucket,size:%d;index:%d,should be:%d,bp:%p\n",size,index,getIndex(size),bp);
             return -1;
         }
         bp = next;
         next = (long unsigned*)(*(bp + 1));
+
     }
     return count;
 }
@@ -535,13 +577,14 @@ static int valid_table(void){
     int countTB;
     int countList;
     
-    if (table == NULL) 
-        dbg_printf("table init prob\n");
+    if (table == NULL){ 
+        dbg_printf("table init prob\n"); 
         return -1;
+    }
     int i;
     for(i = 0;i<20;i++){
         if((countList = valid_list(table[i],i))==-1){
-            dbg_printf("list prob\n");
+            dbg_printf("list prob:%d\n",i);
             return -1;
         }
         else {
@@ -566,23 +609,25 @@ void mm_checkheap(int verbose) {
     char* next = current + 3*WSIZE;
     int preAlloc = -1; //invalid at beginning checks if coalescing is good
 
-    if (current==NULL || next==NULL) 
+    if (current==NULL){ 
         dbg_printf("starting pointers NULL\n");
         exit(1);
+    }
 
-    if (current != ((char*)table+20*WSIZE))
+    if (current != ((char*)table+20*WSIZE)){
         dbg_printf("table length problem\n");
         exit(1);
-
+    }
+    
     //check prologue
     if(GET_SIZE(current)!=16 || GET_SIZE(current+WSIZE)!=16
-        || GET_ALLOC(current)!=1 || GET_ALLOC(current+WSIZE)!=1)
-        dbg_printf("prologue wrong\n");
+        || GET_ALLOC(current)!=1 || GET_ALLOC(current+WSIZE)!=1){
+        dbg_printf("prologue wrong,%ld,%ld,%ld,%ld\n",GET_SIZE(current),GET_SIZE(current+WSIZE),GET_ALLOC(current),GET_ALLOC(current+WSIZE));
         exit(1);
-
+    }
 
     //check everything else in the middle
-    while(GET_SIZE(next) != 0){ //epilogue
+    while(!(GET_SIZE(HDRP(next)) == 0 && GET_ALLOC(HDRP(next))==1)){ //epilogue
         
         current = next;
         next = NEXT_BLKP(current);
@@ -594,37 +639,39 @@ void mm_checkheap(int verbose) {
         int sizeF = GET_SIZE(FTRP(current));
         int allocH = GET_ALLOC(HDRP(current));
         int allocF = GET_ALLOC(FTRP(current));
-        if (sizeH != sizeF || allocH != allocF)
+        dbg_printf("%d,%d,%d,%d\n",sizeH,sizeF,allocH,allocF);
+        if (sizeH != sizeF || allocH != allocF){
             dbg_printf("H-F problem\n");
             exit(1);
+        }
 
         //2.checks alignment
-        if (!aligned((void*)current))
+        if (!aligned((void*)current)){
             dbg_printf("alignment problem\n");
             exit(1);
+        }
 
         //3.checks heap boundaries
-        if (!in_heap((void*)current))
+        if (!in_heap((void*)current)){
             dbg_printf("outside heap\n");
             exit(1);
+        }
             
         //4.checks coalescing
-        if (preAlloc == allocH)
+        if (preAlloc == allocH){
             dbg_printf("coalescing problem\n");
             exit(1);
-        
+        }
     }
     
-    
+    dbg_printf("checking seg list\n");   
     //check the seg list
     if ((out_count = valid_table())==-1){
         dbg_printf("table problem\n");
-        exit(1);    
-      }
-    else {
-        if (out_count != intern_count) 
+        //exit(1);
+    }else if (out_count != intern_count) {
             dbg_printf("num of free lists not same\n");
-            exit(1);  
+            //exit(1);  
       }
 
     return;
