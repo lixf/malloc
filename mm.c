@@ -84,8 +84,8 @@
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
 /* Given block ptr bp, compute the address of the prev and next in list */
-#define NEXT_LIST(bp) (char*)(*((char**)((bp) + WSIZE)))
-#define PREV_LIST(bp) (char*)(*(char**)((bp)))
+#define NEXTP(bp) ((char**)((bp) + WSIZE))
+#define PREVP(bp) (char**)((bp))
 
 /* end my macros */
 
@@ -125,44 +125,46 @@ static int aligned(const void *p);
 void takeOut(char* ptr){ 
     //change the previous and next block in the table
     assert(ptr !=NULL);
-    char* prev_list = PREV_LIST(ptr);
-    char* next_list = NEXT_LIST(ptr);
+    char** prev_list = PREVP(ptr);
+    char** next_list = NEXTP(ptr);
 
-    printf("ptr %p pl %p, nl %p\n",ptr,prev_list,next_list);
-    if(prev_list != NULL && next_list == NULL){
-            printf("my method: %p\n",NEXT_LIST(prev_list));
-            char* temp = NEXT_LIST(prev_list); 
-            temp = NULL;
-            prev_list = NULL;
-            printf("pn %p\n",NEXT_LIST(prev_list));
+    dbg_printf("ptr %p pl %p, nl %p\n",ptr,*prev_list,*next_list);
+    if(*prev_list != NULL && *next_list == NULL){
+            dbg_printf("my method: %p\n",NEXTP(*prev_list));
+            char** temp = NEXTP(*prev_list); 
+            *temp = NULL;
+            *prev_list = NULL;
+            dbg_printf("pn %p\n",NEXTP(*prev_list));
             return;
         } 
-    else if (prev_list == NULL && next_list == NULL){
+    else if (*prev_list == NULL && *next_list == NULL){
             
             //list had only one elem
             table[getIndex(GET_SIZE(HDRP(ptr)))] = NULL;
-            prev_list = NULL;
-            next_list = NULL;
+            *prev_list = NULL;
+            *next_list = NULL;
             return;
         }
-    else if(prev_list == NULL && next_list != NULL){
+    else if(*prev_list == NULL && *next_list != NULL){
             
             //the first one in the list
             char* bp = (char*) ptr;
-            printf("next_list%p,bp%p\n",next_list,bp);
-            table[getIndex(GET_SIZE(HDRP(bp)))] = next_list;
+            dbg_printf("case 3 next_list%p,bp%p\n",*next_list,bp);
+            table[getIndex(GET_SIZE(HDRP(bp)))] = *next_list;
             
-            char* temp = PREV_LIST(next_list); 
-            temp = NULL;
-            next_list = NULL;
+            char** temp = PREVP(*next_list); 
+            *temp = NULL;
+            *next_list = NULL;
             return;
         }
     else{
       //if(prev_list != NULL && next_list != NULL){
-            char* temp1 = NEXT_LIST(prev_list);
-            char* temp2 = PREV_LIST(next_list);
-            temp1 = next_list;
-            temp2 = prev_list;
+            char** temp1 = NEXTP(*prev_list);
+            char** temp2 = PREVP(*next_list);
+            *temp1 = *next_list;
+            *temp2 = *prev_list;
+            *next_list = NULL;
+            *prev_list = NULL;
             return;
         }
 }
@@ -212,7 +214,7 @@ static void *extend_heap(size_t words) {
     /* use mem_sbrk to allocate new heap */
     if ((long)(bp = mem_sbrk(words)) == -1)
         return NULL;
-    dbg_printf("new bp:%p,heap_max:%p,heap_listp:%p\n",bp,heap_max,heap_listp);    
+    dbg_printf("new bp:%p,heap_max:%p,heap_listp:%p\n",bp,heap_max,heap_listp);
    
 
     /* Initialize free block header/footer and the epilogue header */
@@ -229,18 +231,16 @@ static void *extend_heap(size_t words) {
  */
 
 static void* coalesce (char* bp) {
-
+    assert(GET_ALLOC(HDRP(bp))==0);
+    
     size_t prev_alloc = GET_ALLOC(HDRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-    size_t next_size = GET_SIZE(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
-    dbg_printf("prev_alloc:%d,next_alloc:%d,next_size:%d,size:%d\n",(int)prev_alloc,(int)next_alloc,(int)next_size,(int)size);
+    dbg_printf("prev_alloc:%d,next_alloc:%d,size:%d\n",(int)prev_alloc,(int)next_alloc,(int)size);
     //case 1
     if (prev_alloc && next_alloc) {
-        dbg_printf("checking heap\n"); 
-        tableAdd(bp);
-        dbg_heapCheck(1);
-        return bp;
+        next_alloc = 1;
+        //nothing happends
     }
     
     //case 2
@@ -342,7 +342,7 @@ int getIndex(size_t size){
         dbg_printf("in class 3\n");
         index = (size -32)/8; 
     }
-    ASSERT(index >= 0 && index < 20);
+    assert(index >= 0 && index < 20);
     return index;
 }
 /* 
@@ -354,7 +354,7 @@ void tableAdd (char* bp){
     
     int size = GET_SIZE(HDRP(bp));
 
-    assert(size>MIN_BLK_SIZE);
+    assert(size>=MIN_BLK_SIZE);
     assert(GET_ALLOC(HDRP(bp))==0);
     int index;
 
@@ -366,19 +366,22 @@ void tableAdd (char* bp){
     //change the table[index]maybe TODO
     char* next = (char*)table[index];
     table[index] = (void*)bp;
-    char* prev_list = PREV_LIST(bp);
-    printf("prev list:%p\n",prev_list);
-    prev_list = NULL;
+    char** prev_list = PREVP(bp);
+    dbg_printf("prev list:%p\n",*prev_list);
+    *prev_list = NULL;
 
-    char* next_list = NEXT_LIST(bp); 
-    printf("next list:%p\n",next_list);
-    next_list = next;
+    char** next_list = NEXTP(bp); 
+    dbg_printf("next list:%p\n",*next_list);
+    *next_list = next;
     
+    dbg_printf("after assignment nl = %p\n",*next_list);
     if (next !=NULL){
-      char* prev_next = PREV_LIST(NEXT_LIST(bp));
-      prev_next = bp;
+      dbg_printf("should be here\n");
+
+      char** prev_next = PREVP(*next_list);
+      *prev_next = bp;
     }
-    dbg_printf("hi from add to table %p,next%p\n",table[index],next_list);
+    dbg_printf("hi from add to table %p,next%p\n",table[index],*next_list);
     return;
 }
 
@@ -401,7 +404,7 @@ void *malloc (size_t size) {
      * asize describes the payload + hearder + footer
      */
     if (size <= WSIZE)
-        asize = WSIZE+2*WSIZE;
+        asize = 32;
     else
         asize = WSIZE * (2+(size + (WSIZE) + (WSIZE-1)) / WSIZE);
 
@@ -432,13 +435,11 @@ void place (char* bp, size_t size) {
   assert(blkSize>=size);
   dbg_printf("before takeOut: prev blk, hd:%d,ft:%d,alloc? %d\n",(int)GET_SIZE(HDRP(PREV_BLKP(bp))),(int)GET_SIZE(FTRP(PREV_BLKP(bp))),(int)GET_ALLOC(FTRP(PREV_BLKP(bp))));
   dbg_printf("before takeOut: current blk, hd:%d,ft:%d,alloc?%d\n",(int)GET_SIZE(HDRP(bp)),(int)GET_SIZE(FTRP(bp)),(int)GET_ALLOC(HDRP(bp)));
-  dbg_printf("before takeout, prev next: %p\n",(char*)((char*)PREV_BLKP(bp)+WSIZE));
   int index = getIndex(blkSize);
   
   //take out the blk
   takeOut(bp);
   dbg_printf("after takeOut: prev blk, hd:%d,ft:%d\n",(int)GET_SIZE(HDRP(PREV_BLKP(bp))),(int)GET_SIZE(FTRP(PREV_BLKP(bp)))); 
-  dbg_printf("after, prev next: %p\n",(char*)((char*)PREV_BLKP(bp)+WSIZE));
   
   bp = split(bp,size,index);
 
@@ -458,6 +459,7 @@ void place (char* bp, size_t size) {
 
 static char* find_fit (size_t size){
     int index;
+    char** next_list=NULL;
     index = getIndex(size);
     if (index==-1) return NULL;
     
@@ -470,11 +472,12 @@ static char* find_fit (size_t size){
         if ((size_t)GET_SIZE(HDRP(temp))>=size){
             return temp;
         }
-        temp = (char*)(*(long unsigned*)(temp+1));
+        next_list = NEXTP(temp);
+        temp = *next_list;
     }
     //only returns a ptr to the right blk
     //doesn't change ptr around nor split
-
+    dbg_printf("exit from findfit\n");
     return NULL;
     
     //char* next = *(temp+WSIZE);
@@ -502,7 +505,7 @@ char* split(void* block, size_t size,int index){
     }
     else {
         //splits into two aligned blocks
-        assert(diff>MIN_BLK_SIZE);
+        assert(diff>=MIN_BLK_SIZE);
         PUT(HDRP(block),PACK(size,0));
         PUT(FTRP(block),PACK(size,0));
         dbg_printf("new blk: hd:%d,ft:%d\n",(int)GET_SIZE(HDRP(block)),(int)GET_SIZE(FTRP(block)));
@@ -510,7 +513,7 @@ char* split(void* block, size_t size,int index){
         PUT(FTRP(NEXT_BLKP(block)),PACK(diff,0));
         
         tableAdd(NEXT_BLKP(block));
-        printf("new blk added size:%d\n",(int)GET_SIZE(HDRP(NEXT_BLKP(block))));
+        dbg_printf("new blk added size:%d\n",(int)GET_SIZE(HDRP(NEXT_BLKP(block))));
         
         return (char*)block;
     }
@@ -526,13 +529,16 @@ void free (void* ptr) {
 
     char* bp = ptr;
     size_t size = GET_SIZE(HDRP(bp));
-    char* prev_list = PREV_LIST(bp);
-    char* next_list = NEXT_LIST(bp);
+    char** prev_list = PREVP(bp);
+    char** next_list = NEXTP(bp);
 
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
-    prev_list = NULL;
-    next_list = NULL;
+    *prev_list = NULL;
+    *next_list = NULL;
+    dbg_printf("prev_list%p\n",prev_list);
+    dbg_printf("next_list%p\n",next_list);
+    
 
     coalesce(bp);
     dbg_heapCheck(1);
@@ -586,19 +592,19 @@ static int valid_list(void* bucket,int index){
     char* bp = (char*)bucket;
     if (bp==NULL) return 0; //if nothing is in the list
     
-    char* next = NEXT_LIST(bp);
+    char** next = NEXTP(bp);
 
     //check if the size is in the right bucket
     while (bp != NULL) {
         count++;
-        printf("index: %d bp:%p next %p\n",index,bp,next);
-        next = NEXT_LIST(bp);
+        dbg_printf("index: %d bp:%p next %p\n",index,bp,*next);
+        next = NEXTP(bp);
         int size = GET_SIZE(HDRP(bp)); 
         if(!(getIndex(size)==index)){
             dbg_printf("wrong bucket,size:%d;index:%d,should be:%d,bp:%p\n",size,index,getIndex(size),bp);
             return -1;
         }
-        bp = next;
+        bp = *next;
 
     }
     return count;
@@ -669,7 +675,10 @@ void mm_checkheap(int verbose) {
         current = next;
         next = NEXT_BLKP(current);
         if (GET_ALLOC(HDRP(current))==0) intern_count++;
-
+        
+        if(current == (char*) 0x8000008c8){
+            dbg_printf("for the prob: next l: %p, prev l: %p\n",NEXTP(current),PREVP(current));
+        }
 
         //1.checks footer header consistency
         int sizeH = GET_SIZE(HDRP(current));
