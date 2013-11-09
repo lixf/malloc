@@ -20,7 +20,7 @@
 #include "contracts.h"
 /* If you want debugging output, use the following macro.  When you hand
  * in, remove the #define DEBUG line. */
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 # define dbg_printf(...) {printf(__VA_ARGS__); printf("*****in %s*****\n",__func__);}
 # define dbg_heapCheck(...) mm_checkheap(__VA_ARGS__)
@@ -117,8 +117,23 @@ static char* find_fit(size_t size);
 static int aligned(const void *p);
 
 
+/**/
+
+inline void zeros(void* start, void* end){
+    char** head = (char**) start;
+    char** tail = (char**) end;
+    while(head != tail){
+        *head = 0;
+        head = head +1;
+    }
+    *tail = 0;
+    return;
+}
+
+
+
 /*
- * inline helper for pointer arith
+ * helper for pointer arith
  * take out the block from the seglist table
  *
  */
@@ -210,7 +225,7 @@ int mm_init(void) {
 static void *extend_heap(size_t words) {
     char *bp;
 
-    if((long unsigned)mem_heap_hi()+words > (long unsigned)heap_max) return NULL; 
+    if((long unsigned)mem_heap_hi()+(long unsigned)(words*WSIZE) > (long unsigned)heap_max) return NULL; 
     /* use mem_sbrk to allocate new heap */
     if ((long)(bp = mem_sbrk(words)) == -1)
         return NULL;
@@ -256,11 +271,6 @@ static void* coalesce (char* bp) {
 
     //case 3
     else if (!prev_alloc && next_alloc) {
-        //void* last_phy = PREV_BLKP(bp);
-        //same as above
-        //*(((char*)(*(char*)last))+WSIZE) = *((char*)last+WSIZE);
-        //(*(*((char*)last+WSIZE))) = *last;
-
         takeOut(PREV_BLKP(bp));
 
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
@@ -272,14 +282,6 @@ static void* coalesce (char* bp) {
     //case 4
     else {
         
-        /*void* next = NEXT_BLKP(bp);
-        void* last = PREV_BLKP(bp);
-        
-        *(((char*)(*(char*)next))+WSIZE) = *((char*)next+WSIZE);
-        (*(*((char*)next+WSIZE))) = *next;
-        *(((char*)(*(char*)last))+WSIZE) = *((char*)last+WSIZE);
-        (*(*((char*)last+WSIZE))) = *last;
-        */
         takeOut(PREV_BLKP(bp));
         takeOut(NEXT_BLKP(bp));
 
@@ -330,7 +332,6 @@ int getIndex(size_t size){
         int i;
         for(i=11;i>5;i--){
             int map = 1<<i;
-            //printf("size:%d,map:%d,&:%d\n",(int)size,map,(int)(map&size));
             if((size&map)!=0){
               index = i-2;//i-6+4
               break;
@@ -420,6 +421,7 @@ void *malloc (size_t size) {
     if ((bp = extend_heap(extendsize)) == NULL)
         return NULL;
     place(bp, asize);
+    //printf("finished malloc size: %d\n",(int)size);
     return bp;
 }
 
@@ -433,13 +435,10 @@ void place (char* bp, size_t size) {
   unsigned blkSize = GET_SIZE(HDRP(bp));
 
   assert(blkSize>=size);
-  dbg_printf("before takeOut: prev blk, hd:%d,ft:%d,alloc? %d\n",(int)GET_SIZE(HDRP(PREV_BLKP(bp))),(int)GET_SIZE(FTRP(PREV_BLKP(bp))),(int)GET_ALLOC(FTRP(PREV_BLKP(bp))));
-  dbg_printf("before takeOut: current blk, hd:%d,ft:%d,alloc?%d\n",(int)GET_SIZE(HDRP(bp)),(int)GET_SIZE(FTRP(bp)),(int)GET_ALLOC(HDRP(bp)));
   int index = getIndex(blkSize);
   
   //take out the blk
   takeOut(bp);
-  dbg_printf("after takeOut: prev blk, hd:%d,ft:%d\n",(int)GET_SIZE(HDRP(PREV_BLKP(bp))),(int)GET_SIZE(FTRP(PREV_BLKP(bp)))); 
   
   bp = split(bp,size,index);
 
@@ -545,13 +544,70 @@ void free (void* ptr) {
     return;
 }
 
+inline char* cpy (void* src, void* dest, size_t size){
+    char** old = (char**) src;
+    char** new = (char**) dest;
+    assert(size%8 == 0);
+    size_t numBlk = size/8;
+    size_t i;
+    for (i = 0;i<numBlk;i--){
+        new+=i;
+        old+=i;
+        *new = *old;
+    }
+    return (char*)new+1;
+}
+
 /*
  * realloc - you may want to look at mm-naive.c
  */
 void *realloc(void *oldptr, size_t size) {
-    oldptr = oldptr;
-    size=size;
-    return NULL;
+    if (oldptr == NULL) return malloc(size);
+    if (size == 0){
+        free(oldptr);
+        return NULL;
+    }
+    
+    //oldptr is a ptr to a non-freed block
+    char* oldbp = (char*) oldptr;
+    size_t oldSize = GET_SIZE(HDRP(oldbp));
+    int alloc = GET_ALLOC(HDRP(NEXT_BLKP(oldbp)));
+    
+    //for checking second case
+    size_t nextSize = GET_SIZE(HDRP(NEXT_BLKP(oldbp)));
+    size_t sum = oldSize + nextSize; /* will not overflow */
+
+    //case 1: size <= oldSize
+    if (size <= oldSize) return oldptr;
+    //case 2: size > oldSize but free block enough
+    else if (alloc == 0 && sum > size){
+        //take the old blk and part of the next blk
+        char* nextBlk = NEXT_BLKP(oldbp);
+        size_t diff = sum - size;
+
+        takeOut(nextBlk);
+        split(nextBlk,diff,getIndex(nextSize));
+        //zeros the diff part
+        zeros(FTRP(oldbp),FTRP(nextBlk));
+
+        //mark as allocated
+        PUT(HDRP(oldbp),PACK(size,1));
+        PUT(FTRP(oldbp),PACK(size,1));
+        return (void*)oldbp;
+    }
+    //case 3: need to find new blk and copy mem
+    else{
+        assert(size>oldSize);
+        char* newbp = malloc(size);
+        
+        /* not including ft and hd */
+        char* trash = cpy(oldbp,newbp,(oldSize - 2*WSIZE));
+        
+        /* not zero-ing the ft of new blk */
+        zeros(trash, FTRP(newbp)-WSIZE);
+        free(oldbp);
+        return (void*)newbp; 
+    }
 }
 
 /*
@@ -560,9 +616,9 @@ void *realloc(void *oldptr, size_t size) {
  * needed to run the traces.
  */
 void *calloc (size_t nmemb, size_t size) {
-    nmemb = nmemb;
-    size = size;
-    return NULL;
+    char* bp = malloc(nmemb*size);
+    zeros(bp,FTRP(bp)-WSIZE);
+    return bp;
 }
 
 
