@@ -51,7 +51,7 @@
 #define DSIZE 16
 #define MIN_BLK_SIZE 32 //header+footer+prev+next
 #define TB_LEN 20 //table length = 20
-#define SPL_TOR 4
+#define SPL_TOR 8
 
 #define CLASS1_MIN (1<<12)
 #define CLASS1_MAX (1<<31)
@@ -122,7 +122,7 @@ static int aligned(const void *p);
 inline void zeros(void* start, void* end){
     char** head = (char**) start;
     char** tail = (char**) end;
-    while(head != tail){
+    while(head < tail){
         *head = 0;
         head = head +1;
     }
@@ -318,7 +318,7 @@ int getIndex(size_t size){
         //in class 1 get highest bit
         dbg_printf("in class 1\n");
         int i;
-        for(i=32;i>11;i--){
+        for(i=31;i>11;i--){
             int map = 1<<i;
             if ((size&map)!=0){
               index = ((i -12)/2)+10;
@@ -479,9 +479,6 @@ static char* find_fit (size_t size){
     dbg_printf("exit from findfit\n");
     return NULL;
     
-    //char* next = *(temp+WSIZE);
-    //table[index] = next;
-    //*next = NULL;
 }
 /*
  * takes in a ptr to a payload 
@@ -490,7 +487,7 @@ static char* find_fit (size_t size){
  */
 char* split(void* block, size_t size,int index){
     //don't bother spliting if in class 1
-    if (index<4) return (char*)block;
+    if (index<6) return (char*)block;
     //assert((size_t)GET_SIZE(HDRP(block))>=size); 
     int diff = GET_SIZE(HDRP((char*)block)) - size;
     
@@ -568,11 +565,14 @@ void *realloc(void *oldptr, size_t size) {
         return NULL;
     }
     
+    dbg_printf("reallocated size:%d\n",(int)size);
     //oldptr is a ptr to a non-freed block
     char* oldbp = (char*) oldptr;
     size_t oldSize = GET_SIZE(HDRP(oldbp));
     int alloc = GET_ALLOC(HDRP(NEXT_BLKP(oldbp)));
     
+
+    size+=16;
     //for checking second case
     size_t nextSize = GET_SIZE(HDRP(NEXT_BLKP(oldbp)));
     size_t sum = oldSize + nextSize; /* will not overflow */
@@ -586,20 +586,23 @@ void *realloc(void *oldptr, size_t size) {
         size_t diff = sum - size;
 
         takeOut(nextBlk);
-        split(nextBlk,diff,getIndex(nextSize));
+        nextBlk = split(nextBlk,diff,getIndex(nextSize));
+        size = oldSize + GET_SIZE(HDRP(nextBlk));
+
         //zeros the diff part
         zeros(FTRP(oldbp),FTRP(nextBlk));
-
+        
         //mark as allocated
         PUT(HDRP(oldbp),PACK(size,1));
         PUT(FTRP(oldbp),PACK(size,1));
+        //dbg_printf("hdrp %p,ftrp %p,size %d,next %p\n",HDRP(oldbp),FTRP(oldbp),(int) GET_SIZE(HDRP(oldbp)),NEXT_BLKP(oldbp));
         return (void*)oldbp;
     }
     //case 3: need to find new blk and copy mem
     else{
         assert(size>oldSize);
         char* newbp = malloc(size);
-        
+        dbg_printf("shuldn't be here %d\n",(int)size); 
         /* not including ft and hd */
         char* trash = cpy(oldbp,newbp,(oldSize - 2*WSIZE));
         
