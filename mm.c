@@ -22,7 +22,7 @@
  * in, remove the #define DEBUG line. */
 //#define DEBUG
 #ifdef DEBUG
-# define dbg_printf(...) //{printf(__VA_ARGS__); printf("*****in %s*****\n",__func__);}
+# define dbg_printf(...) {printf(__VA_ARGS__); printf("*****in %s*****\n",__func__);}
 # define dbg_heapCheck(...) mm_checkheap(__VA_ARGS__)
 # define dbg_assert(...) assert(__VA_ARGS__)
 #else
@@ -499,7 +499,7 @@ inline char* find_fit (size_t size){
 inline char* split(void* block, size_t size,int index){ 
     dbg_assert(size>=MIN_BLK_SIZE);
     //don't bother spliting if in class 1
-    if (index<6) return (char*)block;
+    if (index<4) return (char*)block;
     dbg_assert((size_t)GET_SIZE(HDRP(block))>=size); 
     int diff = GET_SIZE(HDRP((char*)block)) - size;
     
@@ -516,6 +516,7 @@ inline char* split(void* block, size_t size,int index){
         dbg_assert(diff>=MIN_BLK_SIZE);
         HALFPUT(HDRP(block),PACK(size,0));
         HALFPUT(FTRP(block),PACK(size,0));
+        
         dbg_printf("new blk: hd:%d,ft:%d\n",(int)GET_SIZE(HDRP(block)),(int)GET_SIZE(FTRP(block)));
         HALFPUT(HDRP(NEXT_BLKP(block)),PACK(diff,0));
         HALFPUT(FTRP(NEXT_BLKP(block)),PACK(diff,0));
