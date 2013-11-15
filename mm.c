@@ -24,9 +24,11 @@
 #ifdef DEBUG
 # define dbg_printf(...) {printf(__VA_ARGS__); printf("*****in %s*****\n",__func__);}
 # define dbg_heapCheck(...) mm_checkheap(__VA_ARGS__)
+# define dbg_assert(...) assert(__VA_ARGS__)
 #else
 # define dbg_printf(...)
 # define dbg_heapCheck(...)
+# define dbg_assert(...)
 #endif
 
 
@@ -51,7 +53,8 @@
 #define DSIZE 16
 #define MIN_BLK_SIZE 32 //header+footer+prev+next
 #define TB_LEN 20 //table length = 20
-#define SPL_TOR 16
+#define SPL_TOR 8
+
 
 #define CLASS1_MIN (1<<12)
 #define CLASS1_MAX (1<<31)
@@ -63,6 +66,7 @@
 
 #define CHUNKSIZE (1<<12) //extend the heap by CHUNKSIZE
 #define MAX(x,y) ((x)>(y)? (x) : (y))
+#define ADJUST(s) ((s)>16? (16+8*(3+(((s)-17)/8))) : (32))
 
 /* Pack a size and allocated bit into a word */
 #define PACK(size, alloc) ((size) | (alloc))
@@ -91,15 +95,15 @@
 
 /* global variables */
 
-static char* heap_listp;
-static void** table;
-static char* heap_max;
-
+char* heap_listp;
+void** table;
+char* heap_max;
+int addIndex;
 
 /* function declarations*/
 
 int mm_init(void);
-static void* extend_heap(size_t words);
+void* extend_heap(size_t words);
 
 void* malloc(size_t size);
 void free(void* ptr);
@@ -107,17 +111,17 @@ void* realloc(void* ptr,size_t size);
 void* calloc(size_t nmemb,size_t size);
 void mm_checkheap(int verbose);
 
-inline int getIndex(size_t size);
-inline static void tableAdd (char* bp);
-inline static void place (char* bp, size_t size);
-inline static char* find_fit (size_t size);
-inline static char* split(void* block, size_t size,int index);
-static void* coalesce (char* bp);
+ int getIndex(size_t size);
+ void tableAdd (char* bp);
+ void place (char* bp, size_t size);
+ char* find_fit (size_t size);
+ char* split(void* block, size_t size,int index);
+ void* coalesce (char* bp);
 /*
  * zeros all mem from start to end
  */
 
-inline void zeros(void* start, void* end){
+ inline void zeros(void* start, void* end){
     char** head = (char**) start;
     char** tail = (char**) end;
     while(head < tail){
@@ -128,24 +132,15 @@ inline void zeros(void* start, void* end){
     return;
 }
 
-inline size_t adjustSize(size_t size){
-    
-    size_t asize;
-    if (size <= 2*WSIZE)
-        asize = 32;
-    else
-        asize = 16+ WSIZE*(3+((size-17)/WSIZE));
-    return asize;
-}
 
 /*
  * helper for pointer arith
  * take out the block from the seglist table
  *
  */
-inline static void takeOut(char* ptr){ 
+inline void takeOut(char* ptr){ 
     //change the previous and next block in the table
-    assert(ptr !=NULL);
+    dbg_assert(ptr !=NULL);
     char** prev_list = PREVP(ptr);
     char** next_list = NEXTP(ptr);
 
@@ -227,11 +222,11 @@ int mm_init(void) {
  * helper function for init
  * extends heap by words
  */
-inline static void *extend_heap(size_t words) {
+inline void *extend_heap(size_t words) {
     char *bp;
     size_t size = words*WSIZE;
 
-    if((long unsigned)mem_heap_hi()+(long unsigned) size > (long unsigned)heap_max) return NULL; 
+    //if((long unsigned)mem_heap_hi()+(long unsigned) size > (long unsigned)heap_max) return NULL; 
     /* use mem_sbrk to allocate new heap */
     if ((long)(bp = mem_sbrk(size)) == -1)
         return NULL;
@@ -251,12 +246,11 @@ inline static void *extend_heap(size_t words) {
  * helper function for coalesce
  */
 
-static void* coalesce (char* bp) {
-    assert(GET_ALLOC(HDRP(bp))==0);
+inline void* coalesce (char* bp) {
+    dbg_assert(GET_ALLOC(HDRP(bp))==0);
     
     size_t prev_alloc = GET_ALLOC(HDRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-    size_t size = GET_SIZE(HDRP(bp));
     dbg_printf("prev_alloc:%d,next_alloc:%d,size:%d\n",(int)prev_alloc,(int)next_alloc,(int)size);
     //case 1
     if (prev_alloc && next_alloc) {
@@ -265,11 +259,11 @@ static void* coalesce (char* bp) {
         //nothing happends
         return bp;
     }
-    
     //case 2
     if (prev_alloc && !next_alloc) {
         //takes out the next blk after bp
         takeOut(NEXT_BLKP(bp)); 
+        size_t size = GET_SIZE(HDRP(bp));
 
         //takes care of the physical adr stuff
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
@@ -280,6 +274,7 @@ static void* coalesce (char* bp) {
     //case 3
     else if (!prev_alloc && next_alloc) {
         takeOut(PREV_BLKP(bp));
+        size_t size = GET_SIZE(HDRP(bp));
 
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
@@ -291,6 +286,7 @@ static void* coalesce (char* bp) {
     else { 
         takeOut(PREV_BLKP(bp));
         takeOut(NEXT_BLKP(bp));
+        size_t size = GET_SIZE(HDRP(bp));
 
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
         GET_SIZE(FTRP(NEXT_BLKP(bp)));
@@ -311,22 +307,24 @@ static void* coalesce (char* bp) {
  * Class 3: index 0 - 3; size 32B - 56B
  * Class 2: index 4 - 9; size 1<<6 - 1<<12 -1
  * Class 1: index 10-19; size 1<<12 - 1<<32
+ * 
+ * attempt 2:
+ * class 3: index 0 - 3: 32 - 56
+ * class 2: index 4 - 6: 1<<6 - 1<<15-1
+ *
  *
  */
 inline int getIndex(size_t size){
-    int index = -1;
+    int index = -1;    
+    int i;
+    int map;
     dbg_printf("size to look up: %d\n",(int)size);
-    //check for class
-    if ((long unsigned)size > (long unsigned)CLASS1_MAX){
-        dbg_printf("block too big!\n");
-        return index;
-    } 
     if (size >= CLASS1_MIN){
         //in class 1 get highest bit
         dbg_printf("in class 1\n");
-        int i;
+        
         for(i=31;i>11;i--){
-            int map = 1<<i;
+            map = 1<<i;
             if ((size&map)!=0){
               index = ((i -12)/2)+10;
               break;
@@ -336,9 +334,8 @@ inline int getIndex(size_t size){
     else if (size >= CLASS2_MIN){
         //in class 2 get highest bit        
         dbg_printf("in class 2\n");
-        int i;
         for(i=11;i>5;i--){
-            int map = 1<<i;
+            map = 1<<i;
             if((size&map)!=0){
               index = i-2;//i-6+4
               break;
@@ -350,7 +347,8 @@ inline int getIndex(size_t size){
         dbg_printf("in class 3\n");
         index = (size -32)/8; 
     }
-    assert(index >= 0 && index < 20);
+    dbg_assert(index >= 0 && index < 20);
+
     return index;
 }
 /* 
@@ -358,18 +356,19 @@ inline int getIndex(size_t size){
  * used when: extending heap, coalescing
  */
 
-inline static void tableAdd (char* bp){
+inline void tableAdd (char* bp){
     
     int size = GET_SIZE(HDRP(bp));
 
-    assert(size>=MIN_BLK_SIZE);
-    assert(GET_ALLOC(HDRP(bp))==0);
+    dbg_assert(size>=MIN_BLK_SIZE);
+    dbg_assert(GET_ALLOC(HDRP(bp))==0);
     int index;
 
     index = getIndex(size);
     dbg_printf("index to add to %d,bp:%p\n",index,bp);
     if (index ==-1) 
       return;
+    addIndex = index;
 
     char* next = (char*)table[index];
     table[index] = (void*)bp;
@@ -409,7 +408,7 @@ void *malloc (size_t size) {
      * changed to WSIZE = 8 Bytes
      * asize describes the payload + hearder + footer
      */
-    asize = adjustSize(size);
+    asize = ADJUST(size);
 
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
@@ -431,46 +430,47 @@ void *malloc (size_t size) {
  * helper function for malloc: place 
  */
 
-inline static void place (char* bp, size_t size) {
-  //size is aligned to 8B in malloc
-  unsigned blkSize = GET_SIZE(HDRP(bp));
-
-  assert(blkSize>=size);
-  int index = getIndex(blkSize);
+inline void place (char* bp, size_t size) {
+    //size is aligned to 8B in malloc
+    //unsigned blkSize = GET_SIZE(HDRP(bp));
   
-  //take out the blk
-  takeOut(bp);
+    //dbg_assert(blkSize>=size);
+    int index = addIndex;
+    
+    //take out the blk
+    takeOut(bp);
+    
+    bp = split(bp,size,index);
   
-  bp = split(bp,size,index);
-
-  size = GET_SIZE(HDRP(bp));
-  PUT(HDRP(bp),PACK(size,1));
-  PUT(FTRP(bp),PACK(size,1));
-  dbg_printf("bpuft:%p,prevft:%p\n",FTRP(bp),FTRP(PREV_BLKP(bp)));
-  dbg_printf("just placed: hd:%d,ft:%d\n",(int)GET_SIZE(HDRP(bp)),(int)GET_SIZE(HDRP(bp)));
-  dbg_printf("prev blk, hd:%d,ft:%d\n",(int)GET_SIZE(HDRP(PREV_BLKP(bp))),(int)GET_SIZE(FTRP(PREV_BLKP(bp)))); 
-  dbg_heapCheck(1);
-  return;
+    size = GET_SIZE(HDRP(bp));
+    PUT(HDRP(bp),PACK(size,1));
+    PUT(FTRP(bp),PACK(size,1));
+    dbg_printf("bpuft:%p,prevft:%p\n",FTRP(bp),FTRP(PREV_BLKP(bp)));
+    dbg_printf("just placed: hd:%d,ft:%d\n",(int)GET_SIZE(HDRP(bp)),(int)GET_SIZE(HDRP(bp)));
+    dbg_printf("prev blk, hd:%d,ft:%d\n",(int)GET_SIZE(HDRP(PREV_BLKP(bp))),(int)GET_SIZE(FTRP(PREV_BLKP(bp)))); 
+    dbg_heapCheck(1);
+    return;
 } 
 
 /*
  * helper function for malloc : find_fit
  */
 
-inline static char* find_fit (size_t size){
+inline char* find_fit (size_t size){
     int index;
     char** next_list=NULL;
     index = getIndex(size);
     if (index==-1) return NULL;
     
-    assert(index>=0 && index<20);
+    dbg_assert(index>=0 && index<20);
     
     //take out the first one
     int i=index;
     for(i = index;i<19;i++){
         char* temp = table[i];
         while(temp != NULL){
-            if ((size_t)GET_SIZE(HDRP(temp))-MIN_BLK_SIZE>=size){
+            if ((size_t)GET_SIZE(HDRP(temp))>=size){
+                addIndex=i;
                 return temp;
             }
             next_list = NEXTP(temp);
@@ -488,11 +488,11 @@ inline static char* find_fit (size_t size){
  * split the block if too big 
  * add the split block back to table
  */
-inline static char* split(void* block, size_t size,int index){ 
-    assert(size>=MIN_BLK_SIZE);
+inline char* split(void* block, size_t size,int index){ 
+    dbg_assert(size>=MIN_BLK_SIZE);
     //don't bother spliting if in class 1
     if (index<6) return (char*)block;
-    assert((size_t)GET_SIZE(HDRP(block))>=size); 
+    dbg_assert((size_t)GET_SIZE(HDRP(block))>=size); 
     int diff = GET_SIZE(HDRP((char*)block)) - size;
     
     dbg_printf("diff is %d, blk_size is%d,size is%d\n",diff,(int)GET_SIZE(HDRP(block)),(int)size);
@@ -505,7 +505,7 @@ inline static char* split(void* block, size_t size,int index){
     }
     else {
         //splits into two aligned blocks
-        assert(diff>=MIN_BLK_SIZE);
+        dbg_assert(diff>=MIN_BLK_SIZE);
         PUT(HDRP(block),PACK(size,0));
         PUT(FTRP(block),PACK(size,0));
         dbg_printf("new blk: hd:%d,ft:%d\n",(int)GET_SIZE(HDRP(block)),(int)GET_SIZE(FTRP(block)));
@@ -546,7 +546,7 @@ void free (void* ptr) {
 inline char* cpy (void* src, void* dest, size_t size){
     char* old = (char*) src;
     char* new = (char*) dest;
-    assert(size%8 == 0);
+    dbg_assert(size%8 == 0);
     size_t i;
     for (i = 0;i<size;i++){
         char olddata = (*old);
@@ -574,7 +574,7 @@ void *realloc(void *oldptr, size_t size) {
     dbg_printf("reallocated size:%d,old size %d\n",(int)size,(int)oldSize);
     
 
-    size = adjustSize(size);
+    size = ADJUST(size);
     //for checking second case
     size_t nextSize = GET_SIZE(HDRP(NEXT_BLKP(oldbp)));
     size_t sum = oldSize + nextSize; /* will not overflow */
@@ -584,7 +584,7 @@ void *realloc(void *oldptr, size_t size) {
 
     //case 1: size <= oldSize
     if (size <= oldSize) {
-      dbg_printf("in case one of realloc");
+      dbg_printf("in case one of realloc\n");
       return oldptr;
     }
     //case 2: size > oldSize but free block enough
@@ -607,7 +607,7 @@ void *realloc(void *oldptr, size_t size) {
     }
     //case 3: need to find new blk and copy mem
     else{
-        assert(size>oldSize);
+        dbg_assert(size>oldSize);
         char* newbp = mm_malloc(size);
         /* not including ft and hd TODO garbled byte use perl.rep */
         char* trash = cpy(oldbp,newbp,(oldSize - 2*WSIZE));
@@ -707,7 +707,7 @@ static int valid_table(void){
  */
 void mm_checkheap(int verbose) {
     //always verbose
-    verbose = 1;
+    verbose = verbose;
     
     //counting free lists
     int intern_count;
